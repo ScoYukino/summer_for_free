@@ -21,8 +21,8 @@ YELLOW = (255, 255, 0)
 GRAY = (150, 150, 150)
 
 # 字体
-font = pygame.font.SysFont('Arial', 20)
-large_font = pygame.font.SysFont('Arial', 32)
+font = pygame.font.SysFont('SimHei', 20)
+large_font = pygame.font.SysFont('SimHei', 32)
 
 # 星球类
 class Planet:
@@ -76,7 +76,13 @@ class Fleet:
         self.x = start_planet.x
         self.y = start_planet.y
         self.progress = 0
-        self.speed = 0.01  # 移动速度
+        
+        # 飞船速度与数量成反比
+        BASE_SPEED = 0.015
+        SPEED_FACTOR = 1000
+        
+        speed_modifier = math.log(self.ships + 1) / SPEED_FACTOR
+        self.speed = max(BASE_SPEED - speed_modifier, 0.001)
         
     def update(self):
         self.progress += self.speed
@@ -100,6 +106,7 @@ class Fleet:
                 # 占领星球
                 self.end_planet.owner = self.owner
                 self.end_planet.ships = self.ships - self.end_planet.ships
+                self.end_planet.color = self.end_planet.get_color()
             else:
                 # 防御成功，减少飞船数量
                 self.end_planet.ships -= self.ships
@@ -149,29 +156,20 @@ class Game:
                 owner = 2  # 敌人
                 
             ships = random.randint(10, 50) if owner != 0 else random.randint(5, 20)
+            
+            # --- 修改开始 ---
+            # 确保生产速度大于或等于1
             production_rate = random.randint(1, 5)
+            # --- 修改结束 ---
             
             self.planets.append(Planet(x, y, radius, owner, ships, production_rate))
             
     def select_planet(self, pos):
+        # 检查是否点击了任何星球
         for planet in self.planets:
             if planet.is_clicked(pos):
-                if planet.owner == 1:  # 只能选择自己的星球
-                    if self.selected_planet:
-                        self.selected_planet.selected = False
-                    planet.selected = True
-                    self.selected_planet = planet
-                    return True
-                elif self.selected_planet and planet != self.selected_planet:
-                    # 发送舰队
-                    if self.selected_planet.ships > 1:  # 至少保留1艘飞船
-                        ships_to_send = self.selected_planet.ships - 1
-                        self.selected_planet.ships = 1
-                        self.fleets.append(Fleet(self.selected_planet, planet, ships_to_send, 1))
-                        self.selected_planet.selected = False
-                        self.selected_planet = None
-                        return True
-        return False
+                return planet
+        return None
         
     def update(self):
         # 更新舰队
@@ -197,20 +195,33 @@ class Game:
         self.turn_count += 1
         
     def ai_turn(self):
-        # 简单的AI：随机选择一个敌方星球，攻击一个随机目标
         enemy_planets = [p for p in self.planets if p.owner == 2]
         if not enemy_planets:
             return
             
-        source_planet = random.choice(enemy_planets)
-        if source_planet.ships > 1:
-            # 选择目标
-            possible_targets = [p for p in self.planets if p.owner != 2]
-            if possible_targets:
-                target_planet = random.choice(possible_targets)
-                ships_to_send = source_planet.ships - 1
-                source_planet.ships = 1
-                self.fleets.append(Fleet(source_planet, target_planet, ships_to_send, 2))
+        # 简单AI：50%的几率进行攻击，50%的几率进行增援
+        if random.random() < 0.5:
+            # 攻击逻辑
+            source_planet = random.choice(enemy_planets)
+            if source_planet.ships > 1:
+                possible_targets = [p for p in self.planets if p.owner != 2]
+                if possible_targets:
+                    target_planet = random.choice(possible_targets)
+                    ships_to_send = source_planet.ships // 2
+                    if ships_to_send > 0:
+                        source_planet.ships -= ships_to_send
+                        self.fleets.append(Fleet(source_planet, target_planet, ships_to_send, 2))
+        else:
+            # 增援逻辑
+            ai_planets = [p for p in self.planets if p.owner == 2]
+            if len(ai_planets) > 1:
+                source_planet = max(ai_planets, key=lambda p: p.ships)
+                target_planet = min(ai_planets, key=lambda p: p.ships)
+
+                if source_planet != target_planet and source_planet.ships > 1:
+                    ships_to_send = source_planet.ships // 2
+                    source_planet.ships -= ships_to_send
+                    self.fleets.append(Fleet(source_planet, target_planet, ships_to_send, 2))
                 
     def produce_ships(self):
         # 所有星球生产飞船
@@ -242,7 +253,7 @@ class Game:
         status_text = f"玩家星球: {player_planets} | 敌人星球: {enemy_planets} | 中立星球: {neutral_planets}"
         text = font.render(status_text, True, WHITE)
         surface.blit(text, (10, 10))
-        
+
         # 如果游戏结束，显示结果
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -260,7 +271,7 @@ class Game:
             text_rect = text.get_rect(center=(WIDTH//2, HEIGHT//2))
             surface.blit(text, text_rect)
             
-            restart_text = font.render("按R键重新开始", True, WHITE)
+            restart_text = font.render("按空格键重新开始", True, WHITE)
             restart_rect = restart_text.get_rect(center=(WIDTH//2, HEIGHT//2 + 50))
             surface.blit(restart_text, restart_rect)
 
@@ -275,16 +286,37 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1 and not game.game_over:  # 左键点击
-                    game.select_planet(event.pos)
+            
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if game.game_over:
+                    continue
+                
+                clicked_planet = game.select_planet(event.pos)
+
+                if game.selected_planet:
+                    if clicked_planet and clicked_planet != game.selected_planet:
+                        ships_to_send = game.selected_planet.ships // 2
+                        if ships_to_send > 0:
+                            game.selected_planet.ships -= ships_to_send
+                            game.fleets.append(Fleet(game.selected_planet, clicked_planet, ships_to_send, game.selected_planet.owner))
+                        
+                        game.selected_planet.selected = False
+                        game.selected_planet = None
+                    else:
+                        game.selected_planet.selected = False
+                        game.selected_planet = None
+                else:
+                    if clicked_planet and clicked_planet.owner == 1:
+                        game.selected_planet = clicked_planet
+                        game.selected_planet.selected = True
+            
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r and game.game_over:
-                    game = Game()  # 重新开始游戏
+                if event.key == pygame.K_SPACE and game.game_over:
+                    game = Game()
         
         # 每5秒生产一次飞船
         production_timer += 1
-        if production_timer >= 300:  # 300帧 ≈ 5秒
+        if production_timer >= 300:
             game.produce_ships()
             production_timer = 0
             
