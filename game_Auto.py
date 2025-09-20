@@ -14,15 +14,22 @@ pygame.display.set_caption("行星战争")
 # 颜色定义
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-GREEN = (0, 255, 0)
-YELLOW = (255, 255, 0)
-GRAY = (150, 150, 150)
+PLAYER_COLOR = (78, 192, 255)  # 玩家颜色
+ENEMY_COLOR = (255, 96, 96)   # 敌人颜色
+NEUTRAL_COLOR = (180, 180, 180) # 中立颜色
+LINE_COLOR = (50, 50, 50)     # 连线颜色
 
 # 字体
 font = pygame.font.SysFont('SimHei', 20)
 large_font = pygame.font.SysFont('SimHei', 32)
+
+# 加载背景图片
+try:
+    background_image = pygame.image.load("space_background.jpg").convert()
+    background_image = pygame.transform.scale(background_image, (WIDTH, HEIGHT))
+except pygame.error:
+    print("Warning: space_background.jpg not found. Using a solid black background.")
+    background_image = None
 
 # 星球类
 class Planet:
@@ -35,26 +42,37 @@ class Planet:
         self.production_rate = production_rate
         self.selected = False
         self.color = self.get_color()
-        
+        self.glow_radius = radius + 5
+        self.glow_color = self.color
+
     def get_color(self):
         if self.owner == 0:
-            return GRAY
+            return NEUTRAL_COLOR
         elif self.owner == 1:
-            return BLUE
+            return PLAYER_COLOR
         else:
-            return RED
+            return ENEMY_COLOR
             
     def produce_ships(self):
-        if self.owner != 0:  # 只有非中立星球生产飞船
+        if self.owner != 0:
             self.ships += self.production_rate
             
     def draw(self, surface):
-        # 绘制星球
+        # 绘制星球本体
         pygame.draw.circle(surface, self.color, (self.x, self.y), self.radius)
+        
+        # 绘制星球光晕（根据归属和选中状态）
+        if self.owner != 0:
+            glow_surface = pygame.Surface((self.glow_radius * 2, self.glow_radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surface, (self.color[0], self.color[1], self.color[2], 50), (self.glow_radius, self.glow_radius), self.glow_radius)
+            surface.blit(glow_surface, (self.x - self.glow_radius, self.y - self.glow_radius))
+
+        # 绘制星球环
+        pygame.draw.circle(surface, (255, 255, 255, 50), (self.x, self.y), self.radius + 5, 2)
         
         # 如果被选中，绘制选择圆圈
         if self.selected:
-            pygame.draw.circle(surface, WHITE, (self.x, self.y), self.radius + 5, 2)
+            pygame.draw.circle(surface, WHITE, (self.x, self.y), self.radius + 7, 2)
             
         # 绘制飞船数量
         text = font.render(str(self.ships), True, WHITE)
@@ -72,12 +90,11 @@ class Fleet:
         self.end_planet = end_planet
         self.ships = ships
         self.owner = owner
-        self.color = BLUE if owner == 1 else RED
+        self.color = PLAYER_COLOR if owner == 1 else ENEMY_COLOR
         self.x = start_planet.x
         self.y = start_planet.y
         self.progress = 0
         
-        # 飞船速度与数量成反比
         BASE_SPEED = 0.015
         SPEED_FACTOR = 1000
         
@@ -87,34 +104,27 @@ class Fleet:
     def update(self):
         self.progress += self.speed
         if self.progress >= 1:
-            # 到达目标星球
             self.arrive()
             return True
             
-        # 更新位置
         self.x = self.start_planet.x + (self.end_planet.x - self.start_planet.x) * self.progress
         self.y = self.start_planet.y + (self.end_planet.y - self.start_planet.y) * self.progress
         return False
         
     def arrive(self):
         if self.end_planet.owner == self.owner:
-            # 如果是友方星球，增加飞船数量
             self.end_planet.ships += self.ships
         else:
-            # 如果是敌方或中立星球，进行战斗
             if self.ships > self.end_planet.ships:
-                # 占领星球
                 self.end_planet.owner = self.owner
                 self.end_planet.ships = self.ships - self.end_planet.ships
                 self.end_planet.color = self.end_planet.get_color()
             else:
-                # 防御成功，减少飞船数量
                 self.end_planet.ships -= self.ships
                 
     def draw(self, surface):
         pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), 5)
         
-        # 绘制舰队数量
         text = font.render(str(self.ships), True, WHITE)
         surface.blit(text, (int(self.x) + 10, int(self.y) - 10))
 
@@ -130,66 +140,54 @@ class Game:
         self.setup_game()
         
     def setup_game(self):
-        # 创建星球
+        self.planets = []
         num_planets = 10
         for i in range(num_planets):
-            # 确保星球不会太靠近
             while True:
                 x = random.randint(50, WIDTH - 50)
                 y = random.randint(50, HEIGHT - 50)
                 too_close = False
                 for planet in self.planets:
                     distance = math.sqrt((x - planet.x) ** 2 + (y - planet.y) ** 2)
-                    if distance < 100:  # 最小距离
+                    if distance < 100:
                         too_close = True
                         break
                 if not too_close:
                     break
                     
             radius = random.randint(20, 40)
-            owner = 0  # 中立
-            
-            # 设置一个玩家星球和一个敌人星球
+            owner = 0
             if i == 0:
-                owner = 1  # 玩家
+                owner = 1
             elif i == 1:
-                owner = 2  # 敌人
+                owner = 2
                 
             ships = random.randint(10, 50) if owner != 0 else random.randint(5, 20)
-            
-            # --- 修改开始 ---
-            # 确保生产速度大于或等于1
             production_rate = random.randint(1, 5)
-            # --- 修改结束 ---
-            
             self.planets.append(Planet(x, y, radius, owner, ships, production_rate))
             
     def select_planet(self, pos):
-        # 检查是否点击了任何星球
         for planet in self.planets:
             if planet.is_clicked(pos):
                 return planet
         return None
         
     def update(self):
-        # 更新舰队
         for fleet in self.fleets[:]:
             if fleet.update():
                 self.fleets.remove(fleet)
                 
-        # 检查游戏是否结束
         player_planets = sum(1 for p in self.planets if p.owner == 1)
         enemy_planets = sum(1 for p in self.planets if p.owner == 2)
         
-        if player_planets == 0:
+        if player_planets == 0 and len([f for f in self.fleets if f.owner == 1]) == 0:
             self.game_over = True
-            self.winner = 2  # 敌人获胜
-        elif enemy_planets == 0 and len(self.fleets) == 0:
+            self.winner = 2
+        elif enemy_planets == 0 and len([f for f in self.fleets if f.owner == 2]) == 0:
             self.game_over = True
-            self.winner = 1  # 玩家获胜
+            self.winner = 1
             
-        # AI回合
-        if self.turn_count % 60 == 0:  # 每60帧AI行动一次
+        if self.turn_count % 60 == 0:
             self.ai_turn()
             
         self.turn_count += 1
@@ -199,9 +197,7 @@ class Game:
         if not enemy_planets:
             return
             
-        # 简单AI：50%的几率进行攻击，50%的几率进行增援
         if random.random() < 0.5:
-            # 攻击逻辑
             source_planet = random.choice(enemy_planets)
             if source_planet.ships > 1:
                 possible_targets = [p for p in self.planets if p.owner != 2]
@@ -212,7 +208,6 @@ class Game:
                         source_planet.ships -= ships_to_send
                         self.fleets.append(Fleet(source_planet, target_planet, ships_to_send, 2))
         else:
-            # 增援逻辑
             ai_planets = [p for p in self.planets if p.owner == 2]
             if len(ai_planets) > 1:
                 source_planet = max(ai_planets, key=lambda p: p.ships)
@@ -224,28 +219,25 @@ class Game:
                     self.fleets.append(Fleet(source_planet, target_planet, ships_to_send, 2))
                 
     def produce_ships(self):
-        # 所有星球生产飞船
         for planet in self.planets:
             planet.produce_ships()
             
     def draw(self, surface):
-        # 绘制背景
-        surface.fill(BLACK)
+        if background_image:
+            surface.blit(background_image, (0, 0))
+        else:
+            surface.fill(BLACK)
         
-        # 绘制星球之间的连线（表示可攻击路径）
         for i, planet1 in enumerate(self.planets):
             for planet2 in self.planets[i+1:]:
-                pygame.draw.line(surface, GRAY, (planet1.x, planet1.y), (planet2.x, planet2.y), 1)
+                pygame.draw.line(surface, LINE_COLOR, (planet1.x, planet1.y), (planet2.x, planet2.y), 1)
         
-        # 绘制星球
         for planet in self.planets:
             planet.draw(surface)
             
-        # 绘制舰队
         for fleet in self.fleets:
             fleet.draw(surface)
             
-        # 显示游戏状态
         player_planets = sum(1 for p in self.planets if p.owner == 1)
         enemy_planets = sum(1 for p in self.planets if p.owner == 2)
         neutral_planets = sum(1 for p in self.planets if p.owner == 0)
@@ -254,7 +246,6 @@ class Game:
         text = font.render(status_text, True, WHITE)
         surface.blit(text, (10, 10))
 
-        # 如果游戏结束，显示结果
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
@@ -262,10 +253,10 @@ class Game:
             
             if self.winner == 1:
                 result_text = "你赢了!"
-                color = BLUE
+                color = PLAYER_COLOR
             else:
                 result_text = "你输了!"
-                color = RED
+                color = ENEMY_COLOR
                 
             text = large_font.render(result_text, True, color)
             text_rect = text.get_rect(center=(WIDTH//2, HEIGHT//2))
@@ -314,17 +305,14 @@ def main():
                 if event.key == pygame.K_SPACE and game.game_over:
                     game = Game()
         
-        # 每5秒生产一次飞船
         production_timer += 1
         if production_timer >= 300:
             game.produce_ships()
             production_timer = 0
             
-        # 更新游戏状态
         if not game.game_over:
             game.update()
             
-        # 绘制游戏
         game.draw(screen)
         
         pygame.display.flip()
